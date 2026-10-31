@@ -2,7 +2,14 @@ import { App, TFile, Notice, normalizePath } from "obsidian";
 import type { PluginSettings, PublishResult, UploadedImage, WordPressPostPayload, PostStatus } from "./types";
 import { WordPressClient } from "./wordpress-client";
 import { MarkdownConverter } from "./markdown-converter";
-import { parseFrontmatter, updateFrontmatter, getTitle } from "./frontmatter";
+import {
+	parseFrontmatter,
+	updateFrontmatter,
+	getTitle,
+	getValidStatus,
+	stripFrontmatter,
+	applyPostFinalMarker,
+} from "./frontmatter";
 
 /** MIME type mapping for common image extensions */
 const MIME_TYPES: Record<string, string> = {
@@ -63,14 +70,21 @@ export class Publisher {
 			const content = await this.app.vault.read(file);
 			const frontmatter = parseFrontmatter(content);
 
+			// 去掉 frontmatter，再按标记行切分：之前的内容不进发布正文
+			const body = applyPostFinalMarker(
+				stripFrontmatter(content),
+				settings.postFinalMarker
+			);
+
 			const imageMap = new Map<string, UploadedImage>();
 			if (settings.uploadImages) {
-				await this.uploadImages(file, content, imageMap);
+				await this.uploadImages(file, body, imageMap);
 			}
 
 			this.markdownConverter.setImageMap(imageMap);
-			const gutenbergContent = this.markdownConverter.convert(content);
-			const status: PostStatus = overrideStatus ?? frontmatter.status ?? settings.defaultPostStatus;
+			const gutenbergContent = this.markdownConverter.convert(body);
+			// frontmatter.status 可能是用户自定义的编辑状态，需校验后才用于发布
+			const status: PostStatus = overrideStatus ?? getValidStatus(frontmatter) ?? settings.defaultPostStatus;
 
 			const payload: WordPressPostPayload = {
 				title: getTitle(frontmatter, file.basename),
@@ -86,6 +100,19 @@ export class Publisher {
 			}
 			if (frontmatter.date && status === "future") {
 				payload.date = frontmatter.date;
+			}
+
+			// 特色图：取 frontmatter 的 image 字段（文件名或 wikilink）
+			if (settings.uploadImages) {
+				const featuredMediaId = await this.uploadFeaturedImage(
+					file,
+					frontmatter.image,
+					imageMap
+				);
+
+				if (featuredMediaId !== undefined) {
+					payload.featured_media = featuredMediaId;
+				}
 			}
 
 			if (frontmatter.categories && frontmatter.categories.length > 0) {
@@ -132,6 +159,56 @@ export class Publisher {
 				success: false,
 				error: message,
 			};
+		}
+	}
+
+	/** 上传 frontmatter image 指定的图片并设为特色图；正文里已上传过则复用，返回媒体库 ID */
+	private async uploadFeaturedImage(
+		file: TFile,
+		imageField: unknown,
+		imageMap: Map<string, UploadedImage>
+	): Promise<number | undefined> {
+		const raw = imageField === null || imageField === undefined
+			? ""
+			: String(imageField).trim();
+
+		if (!raw) {
+			return undefined;
+		}
+
+		const existing = imageMap.get(raw);
+
+		if (existing) {
+			return existing.mediaId;
+		}
+
+		try {
+			const imagePath = this.resolveImagePath(file, raw);
+			const imageFile = this.app.vault.getAbstractFileByPath(imagePath);
+
+			if (!(imageFile instanceof TFile)) {
+				console.warn(`Featured image not found: ${raw}`);
+				return undefined;
+			}
+
+			const mimeType = MIME_TYPES[`.${imageFile.extension.toLowerCase()}`];
+
+			if (!mimeType) {
+				console.warn(`Unsupported featured image type: ${imageFile.extension}`);
+				return undefined;
+			}
+
+			const data = await this.app.vault.readBinary(imageFile);
+			const media = await this.wordpressClient.uploadMedia(
+				imageFile.name,
+				data,
+				mimeType
+			);
+
+			return media.id;
+		} catch (error) {
+			console.warn(`Failed to upload featured image ${raw}:`, error);
+			return undefined;
 		}
 	}
 

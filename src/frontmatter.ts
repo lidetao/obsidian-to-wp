@@ -26,7 +26,7 @@ function normalizeStringList(value: unknown): string[] | undefined {
 
 export function parseFrontmatter(content: string): PostFrontmatter {
 	const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-	
+
 	if (!frontmatterMatch) {
 		return {};
 	}
@@ -34,7 +34,7 @@ export function parseFrontmatter(content: string): PostFrontmatter {
 	const yamlContent = frontmatterMatch[1];
 	
 	try {
-		const parsed: unknown = yaml.load(yamlContent, { schema: yaml.FAILSAFE_SCHEMA });
+		const parsed: unknown = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA });
 		
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 			return {};
@@ -42,7 +42,9 @@ export function parseFrontmatter(content: string): PostFrontmatter {
 
 		const parsedFrontmatter = parsed as Record<string, unknown>;
 
-		const result: PostFrontmatter = {};
+		// 先整体保留所有字段，插件未识别的字段（series、digest、publish 等）
+		// 会随 updateFrontmatter 原样写回，避免发布后被清空
+		const result: PostFrontmatter = { ...parsedFrontmatter };
 
 		if (parsedFrontmatter.title !== undefined) {
 			result.title = String(parsedFrontmatter.title);
@@ -50,12 +52,12 @@ export function parseFrontmatter(content: string): PostFrontmatter {
 		const slug = toNonEmptyString(parsedFrontmatter.slug);
 		if (slug) {
 			result.slug = slug;
+		} else {
+			delete result.slug;
 		}
 		if (parsedFrontmatter.status !== undefined) {
-			const status = String(parsedFrontmatter.status);
-			if (VALID_STATUSES.includes(status as PostStatus)) {
-				result.status = status as PostStatus;
-			}
+			// 原样保留；是否可用于发布由 getValidStatus() 判断
+			result.status = String(parsedFrontmatter.status);
 		}
 		if (parsedFrontmatter.excerpt !== undefined) {
 			result.excerpt = String(parsedFrontmatter.excerpt);
@@ -64,11 +66,13 @@ export function parseFrontmatter(content: string): PostFrontmatter {
 			result.date = String(parsedFrontmatter.date);
 		}
 		if (parsedFrontmatter.wp_post_id !== undefined) {
-			const id = typeof parsedFrontmatter.wp_post_id === "number" 
-				? parsedFrontmatter.wp_post_id 
+			const id = typeof parsedFrontmatter.wp_post_id === "number"
+				? parsedFrontmatter.wp_post_id
 				: parseInt(String(parsedFrontmatter.wp_post_id), 10);
 			if (!isNaN(id)) {
 				result.wp_post_id = id;
+			} else {
+				delete result.wp_post_id;
 			}
 		}
 		if (parsedFrontmatter.wp_post_url !== undefined) {
@@ -77,10 +81,14 @@ export function parseFrontmatter(content: string): PostFrontmatter {
 		const categories = normalizeStringList(parsedFrontmatter.categories);
 		if (categories) {
 			result.categories = categories;
+		} else {
+			delete result.categories;
 		}
 		const tags = normalizeStringList(parsedFrontmatter.tags);
 		if (tags) {
 			result.tags = tags;
+		} else {
+			delete result.tags;
 		}
 
 		return result;
@@ -111,32 +119,15 @@ export function updateFrontmatter(
 function generateYaml(frontmatter: PostFrontmatter): string {
 	const yamlObj: Record<string, unknown> = {};
 
-	if (frontmatter.title !== undefined) {
-		yamlObj.title = frontmatter.title;
-	}
-	if (frontmatter.slug !== undefined) {
-		yamlObj.slug = frontmatter.slug;
-	}
-	if (frontmatter.status !== undefined) {
-		yamlObj.status = frontmatter.status;
-	}
-	if (frontmatter.excerpt !== undefined) {
-		yamlObj.excerpt = frontmatter.excerpt;
-	}
-	if (frontmatter.date !== undefined) {
-		yamlObj.date = frontmatter.date;
-	}
-	if (frontmatter.wp_post_id !== undefined) {
-		yamlObj.wp_post_id = frontmatter.wp_post_id;
-	}
-	if (frontmatter.wp_post_url !== undefined) {
-		yamlObj.wp_post_url = frontmatter.wp_post_url;
-	}
-	if (frontmatter.categories && frontmatter.categories.length > 0) {
-		yamlObj.categories = frontmatter.categories;
-	}
-	if (frontmatter.tags && frontmatter.tags.length > 0) {
-		yamlObj.tags = frontmatter.tags;
+	// 按原顺序输出全部字段，插件未识别的字段一并保留
+	for (const [key, value] of Object.entries(frontmatter)) {
+		if (value === undefined) {
+			continue;
+		}
+		if ((key === "categories" || key === "tags") && Array.isArray(value) && value.length === 0) {
+			continue;
+		}
+		yamlObj[key] = value;
 	}
 
 	try {
@@ -144,11 +135,52 @@ function generateYaml(frontmatter: PostFrontmatter): string {
 			lineWidth: -1,
 			noRefs: true,
 			sortKeys: false,
+			schema: yaml.JSON_SCHEMA,
 		});
 	} catch (error) {
 		console.warn("Failed to generate YAML:", error);
 		return "";
 	}
+}
+
+/**
+ * 去掉 frontmatter 块，只留正文部分。
+ * 与 parseFrontmatter 使用同一条正则，保证两者对「什么是 frontmatter」的判断一致。
+ */
+export function stripFrontmatter(content: string): string {
+	return content.replace(/^---\n[\s\S]*?\n---\n*/, "").trim();
+}
+
+/**
+ * 按标记行切分正文：只保留标记行之后的内容。
+ * 标记行留空或正文中找不到标记行时，原样返回（发布整篇）。
+ */
+export function applyPostFinalMarker(content: string, marker?: string): string {
+	if (!marker) {
+		return content;
+	}
+
+	const index = content.indexOf(marker);
+
+	if (index === -1) {
+		return content;
+	}
+
+	return content.slice(index + marker.length).trim();
+}
+
+/**
+ * 返回可用于发布的 status；取值不在 WordPress 认可范围内时返回 undefined，
+ * 由调用方回退到插件设置里的默认状态。
+ */
+export function getValidStatus(frontmatter: PostFrontmatter): PostStatus | undefined {
+	const status = frontmatter.status;
+
+	if (typeof status === "string" && VALID_STATUSES.includes(status as PostStatus)) {
+		return status as PostStatus;
+	}
+
+	return undefined;
 }
 
 export function getTitle(frontmatter: PostFrontmatter, filename: string): string {

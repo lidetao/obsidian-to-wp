@@ -19,6 +19,11 @@ export interface PluginSettings {
 	defaultPostStatus: PostStatus;
 	/** Whether to upload images to WordPress media library */
 	uploadImages: boolean;
+	/**
+	 * 标记行：只有它之后的内容才会发布，之前的内容（素材、TODO、提纲）不会进正文。
+	 * 留空表示发布整篇笔记。
+	 */
+	postFinalMarker: string;
 	/** Whether to create a template file in the publishable folder */
 	createTemplate: boolean;
 }
@@ -29,8 +34,13 @@ export interface PostFrontmatter {
 	title?: string;
 	/** Post slug/permalink */
 	slug?: string;
-	/** Post status (overrides default) */
-	status?: PostStatus;
+	/**
+	 * Post status (overrides default).
+	 * 原样保留任意取值（包括插件不识别的编辑状态），
+	 * 但只有 WordPress 认可的取值才会真正用于发布，
+	 * 判断见 frontmatter.ts 的 getValidStatus()。
+	 */
+	status?: string;
 	/** Category names or IDs */
 	categories?: string[] | number[];
 	/** Tag names */
@@ -43,6 +53,11 @@ export interface PostFrontmatter {
 	wp_post_id?: number;
 	/** WordPress post URL (set after publishing) */
 	wp_post_url?: string;
+	/**
+	 * 插件未识别的其他字段（如 series、digest、publish 等）。
+	 * 发布时会原样写回笔记，不会被删除。
+	 */
+	[key: string]: unknown;
 }
 
 /** WordPress REST API post creation/update payload */
@@ -55,6 +70,8 @@ export interface WordPressPostPayload {
 	tags?: number[];
 	excerpt?: string;
 	date?: string;
+	/** 特色图（Featured Image）的媒体库 ID，取自 frontmatter 的 image 字段 */
+	featured_media?: number;
 }
 
 /** WordPress REST API post response */

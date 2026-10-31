@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	publishableFolder: "",
 	defaultPostStatus: "draft",
 	uploadImages: true,
+	postFinalMarker: "Post final :",
 	createTemplate: false,
 };
 
@@ -198,6 +199,21 @@ export class SettingsTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.uploadImages)
 					.onChange(async (value) => {
 						this.plugin.settings.uploadImages = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Post final marker")
+			.setDesc(
+				"Only content after this line is published. Leave empty to publish the whole note."
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("Post final :")
+					.setValue(this.plugin.settings.postFinalMarker)
+					.onChange(async (value) => {
+						this.plugin.settings.postFinalMarker = value;
 						await this.plugin.saveSettings();
 					})
 			);
