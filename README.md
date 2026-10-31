@@ -6,7 +6,7 @@ Publish your Obsidian notes directly to WordPress as Gutenberg block-formatted p
 
 - **One-click publishing** - Publish notes via command palette or right-click context menu
 - **Gutenberg block output** - Converts markdown to native WordPress block format
-- **Image uploads** - Automatically uploads local images to WordPress media library
+- **Image uploads** - Automatically uploads local images to WordPress media library; files already present under the same filename are reused rather than uploaded again (rename the file whenever you change an image's content)
 - **Folder scoping** - Restrict publishing to notes in a specific folder
 - **Frontmatter control** - Set post properties like title, slug, categories, tags, excerpt, and scheduled date
 - **Post status control** - Publish as draft, published, private, or scheduled (per-post or default setting)

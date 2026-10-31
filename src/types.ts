@@ -89,6 +89,7 @@ export interface WordPressPost {
 export interface WordPressMedia {
 	id: number;
 	source_url: string;
+	mime_type?: string;
 	media_details?: {
 		width: number;
 		height: number;

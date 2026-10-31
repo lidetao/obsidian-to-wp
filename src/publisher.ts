@@ -195,25 +195,62 @@ export class Publisher {
 				return undefined;
 			}
 
-			const mimeType = MIME_TYPES[`.${imageFile.extension.toLowerCase()}`];
+			const resolved = await this.resolveOrUploadImage(imageFile);
+			imageMap.set(raw, resolved);
 
-			if (!mimeType) {
-				console.warn(`Unsupported featured image type: ${imageFile.extension}`);
-				return undefined;
-			}
-
-			const data = await this.app.vault.readBinary(imageFile);
-			const media = await this.wordpressClient.uploadMedia(
-				imageFile.name,
-				data,
-				mimeType
-			);
-
-			return media.id;
+			return resolved.mediaId;
 		} catch (error) {
-			console.warn(`Failed to upload featured image ${raw}:`, error);
+			console.warn(`Failed to resolve featured image ${raw}:`, error);
 			return undefined;
 		}
+	}
+
+	/**
+	 * 处理一张图片：媒体库里已有同名文件就复用，否则才上传。
+	 *
+	 * 早期版本每次发布都上传新副本，媒体库会堆出 just-35-cover.png / -1 / -2 …，
+	 * 因此这里按文件名复用。副作用是封面内容变动后必须换文件名，
+	 * 否则会继续沿用媒体库里的旧图。
+	 */
+	private async resolveOrUploadImage(imageFile: TFile): Promise<UploadedImage> {
+		const ext = imageFile.extension.toLowerCase();
+		const mimeType = MIME_TYPES[`.${ext}`];
+
+		if (!mimeType) {
+			throw new Error(`Unsupported image type: ${ext}`);
+		}
+
+		try {
+			const existing = await this.wordpressClient.findMediaByFilename(imageFile.name);
+
+			if (existing) {
+				console.debug(
+					`Reusing existing media for ${imageFile.name}: #${existing.id}`
+				);
+
+				return {
+					localPath: imageFile.path,
+					wordpressUrl: existing.source_url,
+					mediaId: existing.id,
+				};
+			}
+		} catch (error) {
+			// 查重失败不应阻断发布，退化为上传新副本
+			console.warn(`Media lookup failed for ${imageFile.name}:`, error);
+		}
+
+		const data = await this.app.vault.readBinary(imageFile);
+		const media = await this.wordpressClient.uploadMedia(
+			imageFile.name,
+			data,
+			mimeType
+		);
+
+		return {
+			localPath: imageFile.path,
+			wordpressUrl: media.source_url,
+			mediaId: media.id,
+		};
 	}
 
 	private async uploadImages(
@@ -229,6 +266,11 @@ export class Publisher {
 					continue;
 				}
 
+				// 同一张图在正文里出现多次时只处理一次
+				if (imageMap.has(ref.path)) {
+					continue;
+				}
+
 				// Resolve the image file path relative to the note
 				const imagePath = this.resolveImagePath(file, ref.path);
 				const imageFile = this.app.vault.getAbstractFileByPath(imagePath);
@@ -238,25 +280,7 @@ export class Publisher {
 					continue;
 				}
 
-				const ext = imageFile.extension.toLowerCase();
-				const mimeType = MIME_TYPES[`.${ext}`];
-				if (!mimeType) {
-					console.warn(`Unsupported image type: ${ext}`);
-					continue;
-				}
-
-				const data = await this.app.vault.readBinary(imageFile);
-				const media = await this.wordpressClient.uploadMedia(
-					imageFile.name,
-					data,
-					mimeType
-				);
-
-				imageMap.set(ref.path, {
-					localPath: ref.path,
-					wordpressUrl: media.source_url,
-					mediaId: media.id,
-				});
+				imageMap.set(ref.path, await this.resolveOrUploadImage(imageFile));
 			} catch (error) {
 				console.warn(`Failed to upload image ${ref.path}:`, error);
 			}

@@ -15,6 +15,18 @@ export interface ConnectionTestResult {
 	error?: string;
 }
 
+/** 取 URL 的最后一段作为文件名，兼容带 query string 与 URL 编码的情况 */
+function mediaBasename(sourceUrl: string): string {
+	const withoutQuery = sourceUrl.split("?")[0].split("#")[0];
+	const parts = withoutQuery.split("/");
+
+	try {
+		return decodeURIComponent(parts[parts.length - 1] ?? "");
+	} catch {
+		return parts[parts.length - 1] ?? "";
+	}
+}
+
 export class WordPressClient {
 	private getSettings: () => PluginSettings;
 
@@ -102,7 +114,38 @@ export class WordPressClient {
 		}
 	}
 
-	async uploadMedia(
+	/**
+ * 按文件名在媒体库里查找已存在的图片，命中则返回媒体条目，否则返回 null。
+ *
+ * WordPress 的 `search` 只能匹配 attachment 的标题/描述，且标题可能被改过，
+ * 所以取回候选后必须按 source_url 的实际文件名精确比对，避免误命中同前缀的图。
+ * 找不到就返回 null，调用方照常上传新副本。
+ */
+async findMediaByFilename(filename: string): Promise<WordPressMedia | null> {
+	const query = filename.replace(/\.[^.]+$/, "");
+
+	if (!query) {
+		return null;
+	}
+
+	const candidates = await this.request<WordPressMedia[]>(
+		`/media?search=${encodeURIComponent(query)}&per_page=100&_fields=id,source_url,mime_type`
+	);
+
+	if (!Array.isArray(candidates)) {
+		return null;
+	}
+
+	const target = filename.toLowerCase();
+
+	return (
+		candidates.find(
+			(media) => mediaBasename(media.source_url).toLowerCase() === target
+		) ?? null
+	);
+}
+
+async uploadMedia(
 		filename: string,
 		data: ArrayBuffer,
 		mimeType: string
