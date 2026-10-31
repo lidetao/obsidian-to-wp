@@ -7,6 +7,7 @@ import {
 	updateFrontmatter,
 	getTitle,
 	getValidStatus,
+	toNonEmptyString,
 	stripFrontmatter,
 	applyPostFinalMarker,
 } from "./frontmatter";
@@ -20,6 +21,7 @@ const MIME_TYPES: Record<string, string> = {
 	".webp": "image/webp",
 	".svg": "image/svg+xml",
 };
+
 
 export class Publisher {
 	private app: App;
@@ -96,9 +98,7 @@ export class Publisher {
 				payload.slug = frontmatter.slug.trim();
 			}
 			// 摘要：excerpt 优先，留空则回退到 digest（一篇摘要服务 WP 与公众号两个通道）
-			const excerpt =
-				(typeof frontmatter.excerpt === "string" ? frontmatter.excerpt.trim() : "") ||
-				(typeof frontmatter.digest === "string" ? frontmatter.digest.trim() : "");
+			const excerpt = toNonEmptyString(frontmatter.excerpt) || toNonEmptyString(frontmatter.digest);
 			if (excerpt) {
 				payload.excerpt = excerpt;
 			}

@@ -3,13 +3,23 @@ import type { PostFrontmatter, PostStatus } from "./types";
 
 const VALID_STATUSES: PostStatus[] = ["draft", "publish", "private", "future"];
 
-function toNonEmptyString(value: unknown): string | undefined {
+/**
+ * 当成「没有值」的占位文本，一律忽略。
+ *
+ * 背景：YAML 空值解析成 null 后，`String(null)` 会得到字面量 "null"，
+ * 历史上污染过 frontmatter（如 `excerpt: 'null'`），也见于手填残留。
+ * 提交给 WordPress 之前必须过滤，否则标题/摘要会变成 null。
+ */
+const EMPTY_PLACEHOLDERS = new Set(["null", "undefined", "nan", "none", "-", "—", "n/a"]);
+
+export function toNonEmptyString(value: unknown): string | undefined {
 	if (value === null || value === undefined) {
 		return undefined;
 	}
 
 	const str = String(value).trim();
-	return str.length > 0 ? str : undefined;
+
+	return str.length > 0 && !EMPTY_PLACEHOLDERS.has(str.toLowerCase()) ? str : undefined;
 }
 
 function normalizeStringList(value: unknown): string[] | undefined {
@@ -22,6 +32,32 @@ function normalizeStringList(value: unknown): string[] | undefined {
 
 	const single = toNonEmptyString(value);
 	return single ? [single] : undefined;
+}
+
+/**
+ * 归一成非空字符串并写回；值为空时删除该字段。
+ *
+ * YAML 里的空值会被解析成 null，而 `null !== undefined`，
+ * 直接 `String(value)` 会得到字面量 "null"，再经 updateFrontmatter 写回就变成
+ * `key: 'null'`——下一次发布它会作为真实值提交（典型症状：摘要固定为 null）。
+ * 所以空值一律删字段，不留任何占位。
+ */
+function applyStringField(
+	result: PostFrontmatter,
+	key: "title" | "excerpt" | "date" | "wp_post_url" | "status",
+	value: unknown
+): void {
+	if (value === undefined) {
+		return;
+	}
+
+	const str = toNonEmptyString(value);
+
+	if (str) {
+		result[key] = str;
+	} else {
+		delete result[key];
+	}
 }
 
 export function parseFrontmatter(content: string): PostFrontmatter {
@@ -46,25 +82,17 @@ export function parseFrontmatter(content: string): PostFrontmatter {
 		// 会随 updateFrontmatter 原样写回，避免发布后被清空
 		const result: PostFrontmatter = { ...parsedFrontmatter };
 
-		if (parsedFrontmatter.title !== undefined) {
-			result.title = String(parsedFrontmatter.title);
-		}
+		applyStringField(result, "title", parsedFrontmatter.title);
 		const slug = toNonEmptyString(parsedFrontmatter.slug);
 		if (slug) {
 			result.slug = slug;
 		} else {
 			delete result.slug;
 		}
-		if (parsedFrontmatter.status !== undefined) {
-			// 原样保留；是否可用于发布由 getValidStatus() 判断
-			result.status = String(parsedFrontmatter.status);
-		}
-		if (parsedFrontmatter.excerpt !== undefined) {
-			result.excerpt = String(parsedFrontmatter.excerpt);
-		}
-		if (parsedFrontmatter.date !== undefined) {
-			result.date = String(parsedFrontmatter.date);
-		}
+		// 原样保留；是否可用于发布由 getValidStatus() 判断
+		applyStringField(result, "status", parsedFrontmatter.status);
+		applyStringField(result, "excerpt", parsedFrontmatter.excerpt);
+		applyStringField(result, "date", parsedFrontmatter.date);
 		if (parsedFrontmatter.wp_post_id !== undefined) {
 			const id = typeof parsedFrontmatter.wp_post_id === "number"
 				? parsedFrontmatter.wp_post_id
@@ -75,9 +103,7 @@ export function parseFrontmatter(content: string): PostFrontmatter {
 				delete result.wp_post_id;
 			}
 		}
-		if (parsedFrontmatter.wp_post_url !== undefined) {
-			result.wp_post_url = String(parsedFrontmatter.wp_post_url);
-		}
+		applyStringField(result, "wp_post_url", parsedFrontmatter.wp_post_url);
 		const categories = normalizeStringList(parsedFrontmatter.categories);
 		if (categories) {
 			result.categories = categories;
@@ -184,9 +210,12 @@ export function getValidStatus(frontmatter: PostFrontmatter): PostStatus | undef
 }
 
 export function getTitle(frontmatter: PostFrontmatter, filename: string): string {
-	if (frontmatter.title) {
-		return frontmatter.title;
+	const title = toNonEmptyString(frontmatter.title);
+
+	if (title) {
+		return title;
 	}
+
 	return filename.replace(/\.md$/, "");
 }
 
