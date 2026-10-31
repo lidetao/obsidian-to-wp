@@ -95,8 +95,12 @@ export class Publisher {
 			if (frontmatter.slug && frontmatter.slug.trim().length > 0) {
 				payload.slug = frontmatter.slug.trim();
 			}
-			if (frontmatter.excerpt) {
-				payload.excerpt = frontmatter.excerpt;
+			// 摘要：excerpt 优先，留空则回退到 digest（一篇摘要服务 WP 与公众号两个通道）
+			const excerpt =
+				(typeof frontmatter.excerpt === "string" ? frontmatter.excerpt.trim() : "") ||
+				(typeof frontmatter.digest === "string" ? frontmatter.digest.trim() : "");
+			if (excerpt) {
+				payload.excerpt = excerpt;
 			}
 			if (frontmatter.date && status === "future") {
 				payload.date = frontmatter.date;
