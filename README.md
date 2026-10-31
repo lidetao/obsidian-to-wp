@@ -1,12 +1,44 @@
 # Obsidian-to-WordPress: An Obsidian -> WordPress Publishing Plugin for WordPress
 
-Publish your Obsidian notes directly to WordPress as Gutenberg block-formatted posts. This plugin converts Obsidian-flavored markdown (including callouts, wikilinks, and standard formatting) into WordPress block markup, handles image uploads to your WordPress media library, and authenticates securely using Application Passwords. Please note that this plugin is still under active development. Share any bugs you find via the Issues tab. 
+Publish your Obsidian notes directly to WordPress as Gutenberg block-formatted posts. This plugin converts Obsidian-flavored markdown (including callouts, wikilinks, and standard formatting) into WordPress block markup, handles image uploads to your WordPress media library, and authenticates securely using Application Passwords.
+
+**This is a maintained fork of [serabi/obsidian-to-wp](https://github.com/serabi/obsidian-to-wp)** (MIT), focused on *repeated publishing* — writing, revising and re-publishing the same note over and over without losing your frontmatter. See [Why this fork](#why-this-fork) for what changed.
+
+## Why this fork
+
+Upstream publishes a note perfectly well. Issues appear when the same note is published repeatedly as part of a writing system:
+
+| Upstream problem | What breaks |
+|---|---|
+| Frontmatter is rewritten from a whitelist | Unknown fields (`series`, `digest`, custom state flags) are silently dropped after publishing |
+| No notion of a "final" cutoff | Outlines, TODOs and HTML comments kept above the article body are published along with it |
+| `status` is assumed to be a WordPress status | Custom field semantics are pushed to WordPress as-is |
+| No featured image support | The `image` field is ignored (still listed as "planned") |
+| Images are uploaded unconditionally | Every publish adds another copy to the media library |
+| YAML parsed with a loose schema | Booleans and dates come back as strings |
+
+Upstream had been quiet for roughly ten months, so I forked it for my own pipeline. **Nothing here is merged upstream**; if you only need a one-shot publish, use the original instead.
+
+## Added in this fork
+
+- **Frontmatter is preserved** — every unrecognized field is written back verbatim, so `series`, `digest`, `stage` and `mp_*` survive a publish.
+- **`Post final :` marker** — only content *after* the marker line is published; everything above it (outlines, TODOs, comment blocks) stays local. The marker string is configurable in the settings.
+- **Empty means absent** — empty fields are deleted rather than written back as `'null'` / `'undefined'` placeholders (this is what caused permanently-null excerpts).
+- **Status validation** — only `draft`, `publish`, `private`, `future` are sent to WordPress; anything else falls back to the plugin default, so a human workflow field never leaks into the post status.
+- **Excerpt fallback** — when `excerpt` is empty, `digest` is used.
+- **Featured image** — the `image` field (filename or wikilink) is uploaded and set as the featured image.
+- **Media reuse by filename** — an existing file with the same name is reused instead of uploaded again.
+- **Strict YAML schema** — booleans and dates keep their types.
 
 ## Currently Included Features
 
 - **One-click publishing** - Publish notes via command palette or right-click context menu
 - **Gutenberg block output** - Converts markdown to native WordPress block format
 - **Image uploads** - Automatically uploads local images to WordPress media library; files already present under the same filename are reused rather than uploaded again (rename the file whenever you change an image's content)
+- **Featured image** - `image` in frontmatter is uploaded and set as the featured image
+- **Post final marker** - Only content below the marker line is published
+- **Frontmatter preserving** - Unknown fields such as `series`, `digest` or `stage` are kept
+- **Excerpt fallback** - Falls back to `digest` when `excerpt` is empty
 - **Folder scoping** - Restrict publishing to notes in a specific folder
 - **Frontmatter control** - Set post properties like title, slug, categories, tags, excerpt, and scheduled date
 - **Post status control** - Publish as draft, published, private, or scheduled (per-post or default setting)
@@ -14,11 +46,13 @@ Publish your Obsidian notes directly to WordPress as Gutenberg block-formatted p
 
 ## Installation
 
-### Using BRAT (recommended for beta testing)
+> Both forks ship the **same plugin id** (`obsidian-to-wp`). If the original `serabi/obsidian-to-wp` is installed, remove it first — otherwise Obsidian will not know which one to load.
+
+### Using BRAT (recommended)
 
 1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from Obsidian Community Plugins
 2. Open **Settings > BRAT > Add Beta plugin**
-3. Enter the repository URL: `serabi/obsidian-to-wp`
+3. Enter the repository URL: `lidetao/obsidian-to-wp`
 4. Select **Add Plugin**
 5. Enable the plugin in **Settings > Community plugins**
 
@@ -94,12 +128,33 @@ date: 2024-12-25T10:00:00
 |-------|-------------|
 | `title` | Post title (defaults to filename) |
 | `slug` | URL slug/permalink |
-| `status` | `draft`, `publish`, `private`, or `future` |
+| `status` | `draft`, `publish`, `private`, or `future` (any other value falls back to the plugin default) |
 | `categories` | List of category names (created if they don't exist) |
 | `tags` | List of tag names (created if they don't exist) |
-| `excerpt` | Post excerpt/summary |
+| `excerpt` | Post excerpt/summary; falls back to `digest` when empty |
+| `image` | Cover image file name or `![[wikilink]]`; uploaded and set as the featured image |
+| `digest` | Fallback excerpt (handy if you keep separate summaries per channel) |
 | `date` | Scheduled publish date (ISO 8601 format, requires `status: future`) |
 | `wp_post_id` | WordPress post ID (auto-set after first publish) |
+| `wp_post_url` | WordPress post URL (auto-set after publish) |
+
+Any other field is **preserved verbatim**. Empty fields are removed rather than written back as a placeholder.
+
+### Post final marker
+
+Notes usually carry material that should not be published — outlines, TODOs, comment blocks. Put a marker line before the article body and everything above it stays local:
+
+```markdown
+<!--
+Outline, TODOs, sources. Never published.
+-->
+
+Post final :
+
+## The actual article starts here
+```
+
+The default marker is `Post final :` and it can be changed (or emptied to publish the whole note) in the plugin settings. If the marker is not found, the full note is published — check the spelling before blaming the plugin.
 
 ### Updating Published Posts
 
@@ -131,11 +186,17 @@ The plugin converts the following Obsidian markdown elements to Gutenberg blocks
 - [Links](url) (`[text](url)`)
 - Wikilinks are converted to plain text
 
+## Known limitations
+
+- **Status is one-way.** The plugin does not read the real status from WordPress. If you publish from the WordPress admin instead, update `status: publish` in your note afterwards — otherwise the next publish will send `draft` again and pull the live post back into drafts.
+- **Media reuse is by filename only.** Change an image's content under the same name and WordPress keeps using the old file; rename it to upload a new one.
+- **No create fallback on update.** Once `wp_post_id` is set, publishing sends a `PUT`. If that post was deleted at WordPress side, clear `wp_post_id` in the note so a new one is created.
+- Not merged upstream; picking up upstream changes requires a manual merge.
+
 ## Roadmap
 
 ### Planned Features
 
-- Featured image support
 - Custom post type support
 - Conflict detection and resolution
 - Other ideas? Please share under Issues :) 
