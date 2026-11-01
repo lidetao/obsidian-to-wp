@@ -301,18 +301,20 @@ export class MarkdownConverter {
 	}
 
 	private convertInlineFormatting(text: string): string {
-		let result = text;
+		// 先转义 HTML 特殊字符再套行内标记：正文/行内代码里出现的 <p>、<!-- 等
+		// 必须按字面展示，绝不允许混进 Gutenberg 的 HTML 结构里
+		let result = this.escapeHtml(text);
 
 		result = result.replace(/!\[\[([^\]]+)\]\]/g, (match, path) => {
 			const uploaded = this.imageMap.get(path);
 			const url = uploaded?.wordpressUrl || path;
-			return `<img src="${url}" alt="${this.escapeHtml(path)}"/>`;
+			return `<img src="${url}" alt="${path}"/>`;
 		});
 
 		result = result.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, path) => {
 			const uploaded = this.imageMap.get(path);
 			const url = uploaded?.wordpressUrl || path;
-			return `<img src="${url}" alt="${this.escapeHtml(alt)}"/>`;
+			return `<img src="${url}" alt="${alt}"/>`;
 		});
 
 		result = result.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2");
