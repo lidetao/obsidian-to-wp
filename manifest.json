@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-to-wp",
 	"name": "Obsidian to WordPress",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"minAppVersion": "0.15.0",
 	"description": "Publish Obsidian notes to WordPress as Gutenberg block-formatted posts with image upload support.",
 	"author": "lidetao",

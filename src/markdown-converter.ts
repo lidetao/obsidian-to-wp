@@ -4,6 +4,18 @@
 
 import type { ImageReference, CalloutInfo, UploadedImage } from "./types";
 
+/**
+ * 正文里独占一行的 more 标记。命中后输出 Gutenberg more 块，与 WordPress 后台
+ * 「阅读更多」块保存的形态一致。该行必须独占一行，且不能经过
+ * convertInlineFormatting —— 否则会被转义成 &lt;!--more--&gt; 而失效。
+ */
+const MORE_MARKER_RE = /^<!--\s*more\s*-->$/;
+
+/** GFM 表格行：以竖线开头并以竖线结尾 */
+const TABLE_ROW_RE = /^\s*\|.*\|\s*$/;
+
+const MORE_BLOCK = "<!-- wp:more -->\n<!--more-->\n<!-- /wp:more -->";
+
 export class MarkdownConverter {
 	private imageMap: Map<string, UploadedImage> = new Map();
 
@@ -31,9 +43,20 @@ export class MarkdownConverter {
 		let currentBlock: string[] = [];
 		let inCodeBlock = false;
 		let inCallout = false;
+		let moreSeen = false;
 
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
+
+			// 表格块碰到任何非表格行立即收尾，避免后续段落被吞进表格
+			if (
+				currentBlock.length > 0 &&
+				TABLE_ROW_RE.test(currentBlock[0]) &&
+				!TABLE_ROW_RE.test(line)
+			) {
+				blocks.push(currentBlock.join("\n"));
+				currentBlock = [];
+			}
 
 			if (line.startsWith("```")) {
 				if (inCodeBlock) {
@@ -53,6 +76,29 @@ export class MarkdownConverter {
 			}
 
 			if (inCodeBlock) {
+				currentBlock.push(line);
+				continue;
+			}
+
+			// more 标记：只第一个生效，后续仅作分段，不再插入块
+			if (MORE_MARKER_RE.test(line.trim())) {
+				if (currentBlock.length > 0) {
+					blocks.push(currentBlock.join("\n"));
+					currentBlock = [];
+				}
+				if (!moreSeen) {
+					moreSeen = true;
+					blocks.push(line.trim());
+				}
+				continue;
+			}
+
+			// GFM 表格行：连续行聚成一个块
+			if (TABLE_ROW_RE.test(line)) {
+				if (currentBlock.length > 0 && !TABLE_ROW_RE.test(currentBlock[0])) {
+					blocks.push(currentBlock.join("\n"));
+					currentBlock = [];
+				}
 				currentBlock.push(line);
 				continue;
 			}
@@ -143,6 +189,16 @@ export class MarkdownConverter {
 
 	private convertBlock(block: string): string {
 		const trimmed = block.trim();
+
+		// more 块必须原样输出，不能走任何行内转义
+		if (MORE_MARKER_RE.test(trimmed)) {
+			return MORE_BLOCK;
+		}
+
+		// 表格块是多行字符串，用首行判断
+		if (TABLE_ROW_RE.test(block.split("\n")[0])) {
+			return this.convertTable(trimmed);
+		}
 
 		const headerMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
 		if (headerMatch) {
@@ -293,6 +349,50 @@ export class MarkdownConverter {
 		const alt = this.escapeHtml(imageRef.altText);
 
 		return `<!-- wp:image -->\n<figure class="wp-block-image"><img src="${url}" alt="${alt}"/></figure>\n<!-- /wp:image -->`;
+	}
+
+	/** Convert a GFM table (header + separator + rows) into a Gutenberg table block */
+	private convertTable(block: string): string {
+		const lines = block
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0);
+
+		const splitCells = (line: string): string[] =>
+			line
+				.replace(/^\s*\|/, "")
+				.replace(/\|\s*$/, "")
+				.split(/(?<!\\)\|/)
+				.map((cell) => cell.trim().replace(/\\\|/g, "|"));
+
+		const headerCells = splitCells(lines[0]);
+		const secondCells = lines.length > 1 ? splitCells(lines[1]) : [];
+		const isSeparator =
+			secondCells.length > 0 &&
+			secondCells.every((cell) => /^:?-{3,}:?$/.test(cell));
+
+		// 缺少分隔行说明不是标准 GFM 表格，退化为逐行段落，不臆造表格
+		if (!isSeparator) {
+			return lines.map((line) => this.convertParagraph(line)).join("\n\n");
+		}
+
+		const headHtml = `<thead><tr>${headerCells
+			.map((cell) => `<th>${this.convertInlineFormatting(cell)}</th>`)
+			.join("")}</tr></thead>`;
+
+		const bodyRows = lines.slice(2);
+		const bodyHtml = bodyRows.length
+			? `<tbody>${bodyRows
+					.map(
+						(row) =>
+							`<tr>${splitCells(row)
+								.map((cell) => `<td>${this.convertInlineFormatting(cell)}</td>`)
+								.join("")}</tr>`
+					)
+					.join("")}</tbody>`
+			: "";
+
+		return `<!-- wp:table -->\n<figure class="wp-block-table"><table>${headHtml}${bodyHtml}</table></figure>\n<!-- /wp:table -->`;
 	}
 
 	private convertParagraph(block: string): string {

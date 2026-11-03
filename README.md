@@ -29,6 +29,8 @@ Upstream had been quiet for roughly ten months, so I forked it for my own pipeli
 - **Featured image** — the `image` field (filename or wikilink) is uploaded and set as the featured image.
 - **Media reuse by filename** — an existing file with the same name is reused instead of uploaded again.
 - **Strict YAML schema** — booleans and dates keep their types.
+- **Read more marker** — a standalone `<!--more-->` line becomes a native Gutenberg "Read more" block, so archive pages stop showing the full post.
+- **Markdown tables** — standard GFM tables become native `wp:table` blocks, with inline formatting inside cells.
 
 ## Currently Included Features
 
@@ -156,6 +158,28 @@ Post final :
 
 The default marker is `Post final :` and it can be changed (or emptied to publish the whole note) in the plugin settings. If the marker is not found, the full note is published — check the spelling before blaming the plugin.
 
+### Tables and the read more marker
+
+Standard GFM tables are converted into native `wp:table` blocks, with inline formatting inside cells:
+
+```markdown
+| Field | Value |
+| --- | --- |
+| `status` | `publish` |
+```
+
+Put `<!--more-->` on a line of its own where the archive page should stop:
+
+```markdown
+Introduction paragraph.
+
+<!--more-->
+
+## Rest of the article
+```
+
+It is emitted in WordPress's native three-line form (`<!-- wp:more -->`, `<!--more-->`, `<!-- /wp:more -->`). Only the first marker is used; a marker inside a fenced code block is treated as code. Whether the front page actually truncates depends on the theme calling `the_content()` — themes that render `the_excerpt()` use the `excerpt` / `digest` field instead.
+
 ### Updating Published Posts
 
 After publishing a note, the plugin adds a `wp_post_id` field to the frontmatter. Subsequent publishes will update the existing WordPress post instead of creating a new one.
@@ -175,6 +199,8 @@ The plugin converts the following Obsidian markdown elements to Gutenberg blocks
 | Images (`![]()`, `![[]]`) | Image block |
 | Callouts (`> [!note]`) | Quote block with callout styling |
 | Horizontal rules (`---`) | Separator block |
+| GFM tables (`\| a \| b \|`) | Table block |
+| `<!--more-->` on its own line | More ("Read more") block |
 
 ### Inline Formatting
 
@@ -192,6 +218,8 @@ The plugin converts the following Obsidian markdown elements to Gutenberg blocks
 - **Media reuse is by filename only.** Change an image's content under the same name and WordPress keeps using the old file; rename it to upload a new one.
 - **No create fallback on update.** Once `wp_post_id` is set, publishing sends a `PUT`. If that post was deleted at WordPress side, clear `wp_post_id` in the note so a new one is created.
 - Not merged upstream; picking up upstream changes requires a manual merge.
+- **Tables are standard GFM only.** Column alignment markers and fixed layout are not carried over. Avoid a literal `|` inside a cell — other renderers reading the same note (e.g. Dou Publish for WeChat) may split it into an extra column.
+- **The read more marker depends on the theme.** The block itself is emitted correctly, but a theme rendering `the_excerpt()` ignores it; use `excerpt` / `digest` in that case.
 
 ## Roadmap
 
